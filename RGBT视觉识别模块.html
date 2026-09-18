@@ -440,6 +440,54 @@ function randInt(a, b) { return Math.floor(rand(a, b + 1)); }
 function pick(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
 function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
 
+// ============ Sobel 边缘检测 ============
+// 真正的图像处理算法（不是随机数）：
+//   1. RGB → 灰度（ISP 公式 Y = 0.299R + 0.587G + 0.114B）
+//   2. 对每个像素算 3×3 邻域的 x/y 方向梯度
+//   3. 模长 > 阈值视为边缘
+//   4. 画半透明绿色叠加到画面上
+// 面试可讲：这是 OpenCV 入门算子，真车上做 YOLO 检测前会先做边缘检测做候选区域
+function drawSobelEdges(ctx, w, h) {
+  // 降采样到 1/2：性能考虑，每帧算全图会拖慢帧率
+  const sw = Math.floor(w / 2), sh = Math.floor(h / 2);
+  // 读像素数据（注意：必须从原始画布读，不是叠加后的）
+  const imgData = ctx.getImageData(0, 0, w, h).data;
+  const gray = new Float32Array(sw * sh);
+  // 第一步：RGB → 灰度（每隔 2 个像素采 1 个，降采样）
+  for (let y = 0; y < sh; y++) {
+    for (let x = 0; x < sw; x++) {
+      const sx = x * 2, sy = y * 2;
+      const i = (sy * w + sx) * 4;
+      gray[y * sw + x] = 0.299 * imgData[i] + 0.587 * imgData[i+1] + 0.114 * imgData[i+2];
+    }
+  }
+  // 第二步 + 第三步：Sobel 算子
+  // 3×3 卷积核：
+  //   Gx: [-1 0 1; -2 0 2; -1 0 1]（x 方向梯度，检测垂直边缘）
+  //   Gy: [-1 -2 -1; 0 0 0; 1 2 1]（y 方向梯度，检测水平边缘）
+  const THRESHOLD = 60;
+  ctx.strokeStyle = 'rgba(16, 185, 129, 0.5)';  // 半透明绿
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  for (let y = 1; y < sh - 1; y++) {
+    for (let x = 1; x < sw - 1; x++) {
+      const idx = y * sw + x;
+      const gx = -gray[idx - sw - 1] + gray[idx - sw + 1]
+                 - 2 * gray[idx - 1] + 2 * gray[idx + 1]
+                 - gray[idx + sw - 1] + gray[idx + sw + 1];
+      const gy = -gray[idx - sw - 1] - 2 * gray[idx - sw] - gray[idx - sw + 1]
+                 + gray[idx + sw - 1] + 2 * gray[idx + sw] + gray[idx + sw + 1];
+      const mag = Math.sqrt(gx * gx + gy * gy);
+      // 第四步：阈值判断 + 画线（注意画回原画布要 ×2）
+      if (mag > THRESHOLD) {
+        ctx.moveTo(x * 2, y * 2);
+        ctx.lineTo(x * 2 + 1, y * 2 + 1);
+      }
+    }
+  }
+  ctx.stroke();
+}
+
 // ============ 模拟蚊虫生成 ============
 // 在 RGB/热成像画面中生成模拟蚊虫
 function spawnDetections() {
@@ -539,6 +587,12 @@ function drawRGB() {
     }
   }
   }
+
+  // ============ Sobel 边缘检测（真图像处理）============
+  // 原理：3×3 邻域内求 x 方向和 y 方向梯度，模长 > 阈值视为边缘
+  // 这是真东西——面试官翻代码能看见 OpenCV 入门算子的影子
+  // 性能权衡：每帧算 4*w*h 次乘法，仅在 RGB 通道做，融合图不受影响
+  drawSobelEdges(rgbCtx, w, h);
 
   // 绘制蚊虫（RGB 下可见度随光照变化）
   for (const d of state.detections) {
