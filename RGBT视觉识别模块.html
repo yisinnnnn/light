@@ -1,0 +1,1245 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>光巡卫士 · RGBT 视觉识别模块</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  :root {
+    --bg: #0a0e17;
+    --panel: rgba(17, 24, 39, 0.85);
+    --border: #1e293b;
+    --accent: #06b6d4;
+    --accent2: #22d3ee;
+    --text: #e2e8f0;
+    --muted: #64748b;
+    --green: #10b981;
+    --yellow: #f59e0b;
+    --red: #ef4444;
+    --purple: #a855f7;
+    --aedes: #f59e0b;
+    --culex: #06b6d4;
+    --anopheles: #a855f7;
+  }
+  body {
+    font-family: "Microsoft YaHei", "Segoe UI", sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    background-image:
+      radial-gradient(circle at 20% 0%, rgba(6,182,212,0.08) 0%, transparent 50%),
+      radial-gradient(circle at 80% 100%, rgba(168,85,247,0.06) 0%, transparent 50%);
+  }
+
+  /* Header */
+  .header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 12px 24px;
+    background: linear-gradient(180deg, rgba(6,182,212,0.12), transparent);
+    border-bottom: 1px solid var(--border);
+  }
+  .logo { display: flex; align-items: center; gap: 12px; }
+  .logo-icon {
+    width: 38px; height: 38px; border-radius: 10px;
+    background: linear-gradient(135deg, #06b6d4, #0891b2);
+    display: flex; align-items: center; justify-content: center;
+    font-weight: bold; color: #001820;
+    box-shadow: 0 0 20px rgba(6,182,212,0.5);
+  }
+  .logo h1 { font-size: 18px; letter-spacing: 2px; }
+  .logo .sub { font-size: 11px; color: var(--muted); letter-spacing: 1px; }
+  .status-bar { display: flex; gap: 20px; align-items: center; font-size: 13px; }
+  .status-dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--green); box-shadow: 0 0 8px var(--green);
+    animation: pulse 2s infinite; display: inline-block; margin-right: 6px;
+  }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
+  .clock { font-family: monospace; color: var(--accent2); font-size: 14px; }
+  .badge {
+    font-size: 10px; padding: 2px 8px; border-radius: 3px;
+    background: rgba(245,158,11,0.15); color: var(--yellow); margin-left: 8px;
+  }
+
+  /* Layout */
+  .dashboard {
+    display: grid;
+    grid-template-columns: 1fr 340px;
+    gap: 14px;
+    padding: 14px;
+    height: calc(100vh - 64px);
+  }
+  .main { display: flex; flex-direction: column; gap: 14px; overflow-y: auto; }
+  .sidebar { display: flex; flex-direction: column; gap: 14px; overflow-y: auto; }
+
+  /* Panels */
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px;
+    backdrop-filter: blur(8px);
+    position: relative;
+  }
+  .panel::before {
+    content: ''; position: absolute; top: -1px; left: 20px; right: 20px; height: 2px;
+    background: linear-gradient(90deg, transparent, var(--accent), transparent); opacity: 0.6;
+  }
+  .panel-title {
+    font-size: 13px; color: var(--accent2); margin-bottom: 12px;
+    display: flex; align-items: center; gap: 8px; letter-spacing: 1px;
+  }
+  .panel-title::before {
+    content: ''; width: 3px; height: 12px; background: var(--accent); border-radius: 2px;
+  }
+
+  /* RGBT triple view */
+  .rgbt-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 10px;
+  }
+  .view-wrap {
+    position: relative;
+    background: #000;
+    border-radius: 8px;
+    overflow: hidden;
+    border: 1px solid var(--border);
+    aspect-ratio: 4/3;
+  }
+  .view-wrap canvas { display: block; width: 100%; height: 100%; }
+  .view-label {
+    position: absolute; top: 6px; left: 6px;
+    font-size: 10px; padding: 3px 8px; border-radius: 3px;
+    background: rgba(0,0,0,0.7); color: var(--accent2); font-family: monospace;
+  }
+  .view-info {
+    position: absolute; top: 6px; right: 6px;
+    font-size: 10px; padding: 3px 8px; border-radius: 3px;
+    background: rgba(0,0,0,0.7); color: var(--green); font-family: monospace;
+  }
+
+  /* Capture channel + FFT row */
+  .bottom-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+  }
+
+  /* Stats */
+  .stat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .stat-card {
+    background: rgba(6,182,212,0.05);
+    border: 1px solid var(--border);
+    border-radius: 8px; padding: 10px; text-align: center;
+  }
+  .stat-label { font-size: 11px; color: var(--muted); }
+  .stat-value { font-size: 22px; font-weight: bold; margin: 4px 0; }
+  .stat-value.aedes { color: var(--aedes); }
+  .stat-value.culex { color: var(--culex); }
+  .stat-value.anopheles { color: var(--anopheles); }
+
+  /* Species bar */
+  .species-bar {
+    display: flex; height: 24px; border-radius: 4px; overflow: hidden;
+    border: 1px solid var(--border); margin: 8px 0;
+  }
+  .species-seg {
+    display: flex; align-items: center; justify-content: center;
+    font-size: 10px; color: #000; font-weight: bold;
+    transition: width 0.5s;
+  }
+  .species-legend { display: flex; gap: 12px; font-size: 11px; flex-wrap: wrap; }
+  .species-legend span { display: flex; align-items: center; gap: 4px; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+
+  /* Controls */
+  .btn-row { display: flex; gap: 6px; flex-wrap: wrap; }
+  .btn {
+    padding: 7px 12px; border: 1px solid var(--border);
+    background: rgba(6,182,212,0.08); color: var(--text);
+    border-radius: 6px; cursor: pointer; font-size: 12px; transition: all 0.2s;
+  }
+  .btn:hover { background: rgba(6,182,212,0.2); border-color: var(--accent); }
+  .btn.active { background: var(--accent); color: #001820; border-color: var(--accent); font-weight: bold; }
+
+  /* Log */
+  .log-box {
+    height: 100px; overflow-y: auto; font-family: monospace; font-size: 11px;
+    background: rgba(0,0,0,0.3); border-radius: 6px; padding: 8px;
+  }
+  .log-box::-webkit-scrollbar { width: 3px; }
+  .log-box::-webkit-scrollbar-thumb { background: var(--border); }
+  .log-line { color: var(--muted); line-height: 1.6; }
+  .log-line .t { color: var(--accent2); }
+  .log-line .ok { color: var(--green); }
+  .log-line .warn { color: var(--yellow); }
+
+  /* Disease info */
+  .disease-card {
+    background: rgba(0,0,0,0.2); border-left: 3px solid var(--accent);
+    padding: 8px 10px; border-radius: 4px; margin-bottom: 6px; font-size: 11px;
+  }
+  .disease-card.aedes { border-left-color: var(--aedes); }
+  .disease-card.culex { border-left-color: var(--culex); }
+  .disease-card.anopheles { border-left-color: var(--anopheles); }
+  .disease-name { font-weight: bold; color: var(--text); }
+  .disease-desc { color: var(--muted); margin-top: 2px; }
+
+  /* Auto-night panel */
+  .auto-night-row { display: flex; gap: 10px; font-size: 11px; }
+  .auto-night-cell { flex: 1; }
+  .auto-night-cell .l { color: var(--muted); }
+  .auto-night-cell .v { font-size: 16px; font-weight: bold; font-family: monospace; }
+  .auto-night-cell .v.low { color: var(--yellow); }
+  .auto-night-cell .v.ok { color: var(--green); }
+  .auto-slider { width: 100%; margin-top: 6px; accent-color: var(--accent); }
+  .auto-graph {
+    width: 100%; height: 40px; margin-top: 8px;
+    background: rgba(0,0,0,0.3); border-radius: 4px; border: 1px solid var(--border);
+  }
+
+  /* Mode indicator */
+  .mode-indicator {
+    display: inline-flex; align-items: center; gap: 6px;
+    font-size: 12px; padding: 4px 10px; border-radius: 4px;
+  }
+  .mode-day { background: rgba(245,158,11,0.15); color: var(--yellow); }
+  .mode-night { background: rgba(168,85,247,0.2); color: var(--purple); }
+
+  @media (max-width: 1200px) {
+    .dashboard { grid-template-columns: 1fr; }
+    .rgbt-row { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+
+<header class="header">
+  <div class="logo">
+    <div class="logo-icon">光</div>
+    <div>
+      <h1>RGBT 视觉识别模块 <span class="badge">FEANet 融合</span></h1>
+      <div class="sub">RGB + THERMAL MULTIMODAL FUSION · MOSQUITO RECOGNITION</div>
+    </div>
+  </div>
+  <div class="status-bar">
+    <div class="status-item"><span class="status-dot"></span>模型已加载</div>
+    <div id="modeIndicator" class="mode-indicator mode-day">☀ 日间模式</div>
+    <div class="clock" id="clock">--:--:--</div>
+  </div>
+</header>
+
+<div class="dashboard">
+  <div class="main">
+    <!-- RGBT Triple View -->
+    <div class="panel">
+      <div class="panel-title">RGBT 三通道融合 <span class="badge">特征增强注意力网络</span></div>
+      <div class="rgbt-row">
+        <div class="view-wrap">
+          <canvas id="rgbCanvas"></canvas>
+          <div class="view-label">RGB 通道</div>
+          <div class="view-info" id="rgbInfo">OV5640 · 30fps</div>
+        </div>
+        <div class="view-wrap">
+          <canvas id="thermalCanvas"></canvas>
+          <div class="view-label">热成像通道</div>
+          <div class="view-info" id="thermalInfo">MLX90640 · 24fps</div>
+        </div>
+        <div class="view-wrap">
+          <canvas id="fusedCanvas"></canvas>
+          <div class="view-label">FEANet 融合输出</div>
+          <div class="view-info" id="fusedInfo">检测: 0 · FPS: 30</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Capture Channel + FFT -->
+    <div class="bottom-row">
+      <div class="panel">
+        <div class="panel-title">捕获通道精准计数 <span class="badge">ByteTrack · 虚拟线</span></div>
+        <div class="view-wrap" style="aspect-ratio:16/7">
+          <canvas id="captureCanvas"></canvas>
+          <div class="view-label">气流入口微距相机</div>
+          <div class="view-info" id="captureInfo">计数: 0</div>
+        </div>
+      </div>
+      <div class="panel">
+        <div class="panel-title">翼翅振动频率分析 <span class="badge">FFT · 音频辅助</span></div>
+        <div class="view-wrap" style="aspect-ratio:16/7">
+          <canvas id="fftCanvas"></canvas>
+          <div class="view-label">主频: -- Hz</div>
+          <div class="view-info" id="fftInfo">I2S 采样</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Controls -->
+    <div class="panel">
+      <div class="panel-title">识别控制</div>
+      <div class="btn-row">
+        <button class="btn active" id="btnAuto">自动识别</button>
+        <button class="btn" id="btnCam">真实画面</button>
+        <button class="btn" id="btnNight">切换夜间</button>
+        <button class="btn" id="btnCount">复位计数</button>
+        <button class="btn" id="btnSpeed">降速演示</button>
+      </div>
+      <div style="margin-top:10px;font-size:11px;color:var(--muted)">
+        说明：本模块模拟 RGBT 双模态融合蚊虫识别流程。RGB 提供颜色纹理，热成像提供温度轮廓，
+        FEANet 特征增强注意力机制融合两路特征，解决夜间识别困难问题。捕获通道内用 ByteTrack
+        分配唯一 ID 过线计数，避免重复计数。FFT 分析翼翅振动频率辅助蚊种分类。
+        点「真实画面」可接入笔记本摄像头作为 RGB 通道的真实输入（真车上换成 OV5640）。
+      </div>
+    </div>
+  </div>
+
+  <div class="sidebar">
+    <!-- Detection Stats -->
+    <div class="panel">
+      <div class="panel-title">实时检测统计</div>
+      <div class="stat-grid">
+        <div class="stat-card">
+          <div class="stat-label">当前检测数</div>
+          <div class="stat-value" id="detCount" style="color:var(--accent)">0</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">累计捕获</div>
+          <div class="stat-value" id="capCount" style="color:var(--green)">0</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">FPS</div>
+          <div class="stat-value" id="fpsVal">30</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">平均置信度</div>
+          <div class="stat-value" id="avgConf" style="color:var(--yellow)">0%</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Auto-Night Detection -->
+    <div class="panel">
+      <div class="panel-title">夜间模式自动判定 <span class="badge">亮度阈值</span></div>
+      <div class="auto-night-row">
+        <div class="auto-night-cell">
+          <div class="l">当前 RGB 亮度</div>
+          <div class="v" id="autoBrightness">--</div>
+        </div>
+        <div class="auto-night-cell">
+          <div class="l">判定阈值</div>
+          <div class="v" style="color:var(--accent)">30</div>
+        </div>
+        <div class="auto-night-cell">
+          <div class="l">判定状态</div>
+          <div class="v ok" id="autoStatus">☀ 日间</div>
+        </div>
+      </div>
+      <div style="margin-top:8px;font-size:10px;color:var(--muted)">模拟环境光（演示用，拖动模拟天色变化）</div>
+      <input type="range" min="5" max="220" value="220" class="auto-slider" id="ambientSlider">
+      <canvas class="auto-graph" id="autoGraph"></canvas>
+      <div style="margin-top:6px;font-size:10px;color:var(--muted)">折线图为最近 60 帧亮度，跌破阈值自动切夜间</div>
+    </div>
+
+    <!-- Species Distribution -->
+    <div class="panel">
+      <div class="panel-title">蚊种分布</div>
+      <div class="species-bar" id="speciesBar">
+        <div class="species-seg" style="width:0%;background:var(--aedes)"></div>
+        <div class="species-seg" style="width:0%;background:var(--culex)"></div>
+        <div class="species-seg" style="width:0%;background:var(--anopheles)"></div>
+      </div>
+      <div class="species-legend">
+        <span><span class="dot" style="background:var(--aedes)"></span>伊蚊</span>
+        <span><span class="dot" style="background:var(--culex)"></span>库蚊</span>
+        <span><span class="dot" style="background:var(--anopheles)"></span>按蚊</span>
+      </div>
+      <div class="stat-grid" style="margin-top:10px;grid-template-columns:1fr 1fr 1fr">
+        <div class="stat-card">
+          <div class="stat-label">伊蚊</div>
+          <div class="stat-value aedes" id="cntAedes">0</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">库蚊</div>
+          <div class="stat-value culex" id="cntCulex">0</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">按蚊</div>
+          <div class="stat-value anopheles" id="cntAnopheles">0</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Disease Info -->
+    <div class="panel">
+      <div class="panel-title">蚊种与传播疾病</div>
+      <div class="disease-card aedes">
+        <div class="disease-name">伊蚊 Aedes → 登革热 / 寨卡</div>
+        <div class="disease-desc">翅振频率 ~500Hz，白天活动，容器积水孳生</div>
+      </div>
+      <div class="disease-card culex">
+        <div class="disease-name">库蚊 Culex → 乙型脑炎</div>
+        <div class="disease-desc">翅振频率 ~400Hz，夜间活动，污水坑孳生</div>
+      </div>
+      <div class="disease-card anopheles">
+        <div class="disease-name">按蚊 Anopheles → 疟疾</div>
+        <div class="disease-desc">翅振频率 ~450Hz，黄昏活动，清水孳生</div>
+      </div>
+    </div>
+
+    <!-- Log -->
+    <div class="panel" style="flex:1">
+      <div class="panel-title">识别日志</div>
+      <div class="log-box" id="logBox"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+
+// ============ 全局状态 ============
+const state = {
+  isNight: false,
+  autoMode: true,
+  captureCount: 0,
+  detections: [],
+  captureTargets: [],    // 捕获通道内的跟踪目标 {id,x,y,type,crossed}
+  fftData: new Array(64).fill(0),
+  nextId: 1,
+  speciesCounts: { aedes: 0, culex: 0, anopheles: 0 },
+  confidences: [],
+  fps: 30,
+  // 自动夜间判定：环境光滑块 + 亮度历史
+  ambientLight: 220,    // 模拟环境光 5~220
+  brightness: 0,        // 当前 RGB 通道平均亮度 0~255
+  brightnessHist: [],   // 最近 60 帧亮度历史
+  autoTriggered: false, // 是否由自动判定触发过（防日志刷屏）
+};
+
+const SPECIES = ["aedes", "culex", "anopheles"];
+const SPECIES_CN = { aedes: "伊蚊", culex: "库蚊", anopheles: "按蚊" };
+const SPECIES_COLOR = { aedes: "#f59e0b", culex: "#06b6d4", anopheles: "#a855f7" };
+// 各蚊种翅振主频 (Hz)
+const WINGBEAT_FREQ = { aedes: 500, culex: 400, anopheles: 450 };
+
+function log(msg, cls) {
+  const box = $("logBox");
+  const line = document.createElement("div");
+  line.className = "log-line";
+  line.innerHTML = '<span class="t">[' + new Date().toLocaleTimeString() + "]</span> " +
+    '<span class="' + (cls || "") + '">' + msg + "</span>";
+  box.prepend(line);
+  while (box.children.length > 50) box.lastElementChild.remove();
+}
+
+// ============ 工具函数 ============
+function rand(a, b) { return a + Math.random() * (b - a); }
+function randInt(a, b) { return Math.floor(rand(a, b + 1)); }
+function pick(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
+function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+
+// ============ 模拟蚊虫生成 ============
+// 在 RGB/热成像画面中生成模拟蚊虫
+function spawnDetections() {
+  const count = state.isNight ? randInt(2, 6) : randInt(1, 5);
+  state.detections = [];
+  for (let i = 0; i < count; i++) {
+    const species = pick(SPECIES);
+    state.detections.push({
+      x: rand(0.08, 0.85),
+      y: rand(0.08, 0.85),
+      w: rand(0.04, 0.10),
+      h: rand(0.04, 0.10),
+      conf: round(rand(0.65, 0.98), 2),
+      species: species,
+      vx: rand(-0.005, 0.005),
+      vy: rand(-0.005, 0.005),
+      // 热成像温度偏移（蚊虫比环境略高）
+      tempOffset: rand(1.5, 4.0),
+    });
+  }
+}
+
+function round(v, n) { return parseFloat(v.toFixed(n)); }
+
+// ============ 真实摄像头输入（RGB 通道）============
+let camStream = null;
+let camVideo = null;
+let camMode = false;
+
+async function toggleCamera() {
+  if (camMode) {
+    camMode = false;
+    if (camStream) camStream.getTracks().forEach(t => t.stop());
+    camStream = null;
+    camVideo = null;
+    $("btnCam").classList.remove("active");
+    log("已切回模拟画面", "warn");
+    return;
+  }
+  try {
+    camStream = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 } });
+    camVideo = document.createElement("video");
+    camVideo.srcObject = camStream;
+    camVideo.muted = true;
+    await camVideo.play();
+    camMode = true;
+    $("btnCam").classList.add("active");
+    log("真实摄像头已接入：RGB 通道显示实时画面（真车上为 OV5640）", "ok");
+  } catch (e) {
+    log("摄像头打开失败：" + e.message + "，请检查浏览器权限", "warn");
+  }
+}
+
+// ============ RGB 通道绘制 ============
+const rgbCanvas = $("rgbCanvas");
+const rgbCtx = rgbCanvas.getContext("2d");
+
+function drawRGB() {
+  const w = rgbCanvas.width = rgbCanvas.offsetWidth * 2;
+  const h = rgbCanvas.height = rgbCanvas.offsetHeight * 2;
+
+  if (camMode && camVideo && camVideo.readyState >= 2) {
+    // 真实画面模式：RGB 通道直接显示摄像头输入
+    rgbCtx.drawImage(camVideo, 0, 0, w, h);
+    if (state.isNight) {
+      rgbCtx.fillStyle = "rgba(0,0,40,0.45)";
+      rgbCtx.fillRect(0, 0, w, h);
+    }
+  } else {
+  // 背景：模拟户外场景
+  const grad = rgbCtx.createLinearGradient(0, 0, 0, h);
+  if (state.isNight) {
+    grad.addColorStop(0, "#0a1628");
+    grad.addColorStop(1, "#06101e");
+  } else {
+    grad.addColorStop(0, "#2d4a2d");
+    grad.addColorStop(1, "#1a3318");
+  }
+  rgbCtx.fillStyle = grad;
+  rgbCtx.fillRect(0, 0, w, h);
+
+  // 背景噪点/纹理（模拟草地/树叶）
+  for (let i = 0; i < 30; i++) {
+    rgbCtx.fillStyle = `rgba(${randInt(20,60)},${randInt(60,100)},${randInt(20,50)},0.15)`;
+    rgbCtx.beginPath();
+    rgbCtx.arc(rand(0, w), rand(0, h), rand(10, 40), 0, Math.PI * 2);
+    rgbCtx.fill();
+  }
+
+  // 夜间时 RGB 通道整体变暗、加噪
+  if (state.isNight) {
+    rgbCtx.fillStyle = "rgba(0,0,20,0.5)";
+    rgbCtx.fillRect(0, 0, w, h);
+    for (let i = 0; i < 2000; i++) {
+      rgbCtx.fillStyle = `rgba(255,255,255,${rand(0,0.03)})`;
+      rgbCtx.fillRect(rand(0, w), rand(0, h), 1, 1);
+    }
+  }
+  }
+
+  // 绘制蚊虫（RGB 下可见度随光照变化）
+  for (const d of state.detections) {
+    const x = d.x * w, y = d.y * h, bw = d.w * w, bh = d.h * h;
+    const visibility = state.isNight ? 0.3 : 1.0;
+    rgbCtx.globalAlpha = visibility;
+    // 蚊虫身体
+    rgbCtx.fillStyle = state.isNight ? "#333" : "#1a1a1a";
+    rgbCtx.beginPath();
+    rgbCtx.ellipse(x + bw/2, y + bh/2, bw/2, bh/3, 0, 0, Math.PI * 2);
+    rgbCtx.fill();
+    // 翅膀
+    rgbCtx.fillStyle = state.isNight ? "rgba(100,100,120,0.4)" : "rgba(200,200,220,0.5)";
+    rgbCtx.beginPath();
+    rgbCtx.ellipse(x + bw/2, y + bh/2 - bh/6, bw/3, bh/6, rand(-0.3,0.3), 0, Math.PI * 2);
+    rgbCtx.fill();
+    rgbCtx.globalAlpha = 1;
+  }
+
+  $("rgbInfo").textContent = camMode ? "笔记本摄像头 · 实时" : (state.isNight ? "低光 · 增益+30dB" : "OV5640 · 30fps");
+}
+
+// ============ 热成像通道绘制 ============
+const thermalCanvas = $("thermalCanvas");
+const thermalCtx = thermalCanvas.getContext("2d");
+
+function drawThermal() {
+  const w = thermalCanvas.width = thermalCanvas.offsetWidth * 2;
+  const h = thermalCanvas.height = thermalCanvas.offsetHeight * 2;
+
+  // 热成像底图（伪彩色，环境温度 ~27°C）
+  const envTemp = 27;
+  const imgData = thermalCtx.createImageData(w, h);
+  for (let py = 0; py < h; py += 2) {
+    for (let px = 0; px < w; px += 2) {
+      // 环境温度随位置轻微变化
+      const t = envTemp + rand(-1.5, 1.5);
+      const [r, g, b] = tempToColor(t);
+      for (let dy = 0; dy < 2; dy++) {
+        for (let dx = 0; dx < 2; dx++) {
+          const idx = ((py + dy) * w + (px + dx)) * 4;
+          imgData.data[idx] = r;
+          imgData.data[idx+1] = g;
+          imgData.data[idx+2] = b;
+          imgData.data[idx+3] = 255;
+        }
+      }
+    }
+  }
+  thermalCtx.putImageData(imgData, 0, 0);
+
+  // 绘制蚊虫（热成像下蚊虫体温略高于环境，更清晰）
+  for (const d of state.detections) {
+    const x = d.x * w, y = d.y * h, bw = d.w * w, bh = d.h * h;
+    const t = envTemp + d.tempOffset;
+    const [r, g, b] = tempToColor(t);
+    thermalCtx.fillStyle = `rgb(${r},${g},${b})`;
+    thermalCtx.shadowColor = `rgb(${r},${g},${b})`;
+    thermalCtx.shadowBlur = 8;
+    thermalCtx.beginPath();
+    thermalCtx.ellipse(x + bw/2, y + bh/2, bw/2, bh/3, 0, 0, Math.PI * 2);
+    thermalCtx.fill();
+    thermalCtx.shadowBlur = 0;
+  }
+
+  // 温度色标
+  thermalCtx.fillStyle = "rgba(0,0,0,0.5)";
+  thermalCtx.fillRect(w - 20, 10, 10, h - 20);
+  for (let i = 0; i < h - 20; i++) {
+    const t = 35 - (i / (h - 20)) * 12; // 35°C ~ 23°C
+    const [r, g, b] = tempToColor(t);
+    thermalCtx.fillStyle = `rgb(${r},${g},${b})`;
+    thermalCtx.fillRect(w - 20, 10 + i, 10, 1);
+  }
+
+  $("thermalInfo").textContent = state.isNight ? "热成像主导 · 24fps" : "MLX90640 · 24fps";
+}
+
+// 温度→伪彩色映射（蓝→青→绿→黄→红→白）
+function tempToColor(t) {
+  // t: 22 ~ 38
+  const n = clamp((t - 22) / 16, 0, 1);
+  let r, g, b;
+  if (n < 0.2) { r = 30; g = 50; b = 180 + n * 350; }
+  else if (n < 0.4) { const k = (n - 0.2) / 0.2; r = 30; g = 50 + k * 200; b = 255 - k * 100; }
+  else if (n < 0.6) { const k = (n - 0.4) / 0.2; r = 30 + k * 200; g = 250; b = 155 - k * 150; }
+  else if (n < 0.8) { const k = (n - 0.6) / 0.2; r = 230; g = 250 - k * 150; b = 5; }
+  else { const k = (n - 0.8) / 0.2; r = 230 + k * 25; g = 100 + k * 155; b = 5 + k * 250; }
+  return [r | 0, g | 0, b | 0];
+}
+
+// ============ RGB 通道平均亮度计算 + 自动夜间判定 ============
+//
+// 思路：每帧从 RGB canvas 采样一个 64x64 区域，算所有像素的平均亮度。
+// 真车上这个判据可以替换为光敏电阻读数 / ISP AE 统计值，逻辑一样。
+// 阈值 30：经验值，对应傍晚太阳落山后的环境照度。
+//
+// 为什么不让用户自己拖滑块决定？——演示给面试官看"自动"两个字怎么落地。
+
+const NIGHT_THRESHOLD = 30;  // 0~255，低于此值判夜间
+
+function computeBrightness() {
+  // 真实摄像头模式：直接从视频流采样
+  // 模拟模式：从刚画好的 rgbCanvas 采样
+  let srcW, srcH, srcCtx;
+  if (camMode && camVideo && camVideo.readyState >= 2) {
+    srcW = camVideo.videoWidth || 640;
+    srcH = camVideo.videoHeight || 480;
+    // 临时画到一个隐藏 canvas 采样
+    const tmp = computeBrightness._tmp || document.createElement("canvas");
+    tmp.width = 64; tmp.height = 64;
+    const tmpCtx = tmp.getContext("2d");
+    tmpCtx.drawImage(camVideo, 0, 0, 64, 64);
+    srcCtx = tmpCtx;
+  } else {
+    // 取 rgbCanvas 中心 64x64
+    const cw = rgbCanvas.width, ch = rgbCanvas.height;
+    const sx = Math.max(0, (cw - 64) >> 1);
+    const sy = Math.max(0, (ch - 64) >> 1);
+    const tmp = computeBrightness._tmp || document.createElement("canvas");
+    tmp.width = 64; tmp.height = 64;
+    const tmpCtx = tmp.getContext("2d");
+    tmpCtx.drawImage(rgbCanvas, sx, sy, 64, 64, 0, 0, 64, 64);
+    srcCtx = tmpCtx;
+    srcH = 64;
+  }
+  const data = srcCtx.getImageData(0, 0, 64, 64).data;
+  let sum = 0;
+  for (let i = 0; i < data.length; i += 4) {
+    // 亮度公式：Y = 0.299R + 0.587G + 0.114B（与 ISP AE 算法一致）
+    sum += data[i] * 0.299 + data[i+1] * 0.587 + data[i+2] * 0.114;
+  }
+  return Math.round(sum / (data.length / 4));
+}
+
+// ============ 自动夜间判定面板 ============
+const autoGraph = $("autoGraph");
+const autoGraphCtx = autoGraph.getContext("2d");
+
+function drawAutoNight() {
+  // 1) 算亮度
+  state.brightness = computeBrightness();
+  // 2) 环境光滑块把亮度往目标值拉（演示用）
+  //    滑块=220 → 亮度接近 220；滑块=10 → 亮度被压到 ~15
+  //    平滑过渡，避免阶跃
+  const target = state.ambientLight;
+  state.brightness = Math.round(state.brightness * 0.7 + target * 0.3);
+
+  // 3) 入栈历史（最多 60 帧）
+  state.brightnessHist.push(state.brightness);
+  if (state.brightnessHist.length > 60) state.brightnessHist.shift();
+
+  // 4) 自动判定：连续 5 帧低于阈值 → 切夜间
+  //    加 5 帧防抖，避免云遮太阳这种抖动频繁切模式
+  const belowCount = state.brightnessHist.slice(-5).filter(v => v < NIGHT_THRESHOLD).length;
+  if (belowCount >= 5 && !state.isNight) {
+    setNight(true);
+    state.autoTriggered = true;
+    log("【自动判定】RGB 亮度连续 5 帧 < 30 → 自动切夜间模式", "warn");
+  } else if (belowCount === 0 && state.isNight && state.autoTriggered) {
+    // 手动切的不自动回切（用户主动行为优先）
+    setNight(false);
+    log("【自动判定】RGB 亮度回升 → 自动切回日间模式", "ok");
+    state.autoTriggered = false;
+  }
+
+  // 5) 更新面板数值
+  $("autoBrightness").textContent = state.brightness;
+  const statusEl = $("autoStatus");
+  if (state.isNight) {
+    statusEl.textContent = "🌙 夜间";
+    statusEl.className = "v low";
+  } else {
+    statusEl.textContent = "☀ 日间";
+    statusEl.className = "v ok";
+  }
+
+  // 6) 画折线图
+  const w = autoGraph.width = autoGraph.offsetWidth * 2;
+  const h = autoGraph.height = autoGraph.offsetHeight * 2;
+  autoGraphCtx.fillStyle = "rgba(5,8,16,1)";
+  autoGraphCtx.fillRect(0, 0, w, h);
+
+  // 阈值虚线
+  const thY = h - (NIGHT_THRESHOLD / 255) * h;
+  autoGraphCtx.strokeStyle = "rgba(239,68,68,0.4)";
+  autoGraphCtx.lineWidth = 1;
+  autoGraphCtx.setLineDash([4, 4]);
+  autoGraphCtx.beginPath();
+  autoGraphCtx.moveTo(0, thY); autoGraphCtx.lineTo(w, thY);
+  autoGraphCtx.stroke();
+  autoGraphCtx.setLineDash([]);
+
+  // 折线
+  if (state.brightnessHist.length > 1) {
+    autoGraphCtx.strokeStyle = state.isNight ? "#a855f7" : "#06b6d4";
+    autoGraphCtx.lineWidth = 2;
+    autoGraphCtx.beginPath();
+    const stepX = w / 60;
+    for (let i = 0; i < state.brightnessHist.length; i++) {
+      const v = state.brightnessHist[i];
+      const x = i * stepX;
+      const y = h - (v / 255) * h;
+      if (i === 0) autoGraphCtx.moveTo(x, y);
+      else autoGraphCtx.lineTo(x, y);
+    }
+    autoGraphCtx.stroke();
+
+    // 当前点高亮
+    const lastX = (state.brightnessHist.length - 1) * stepX;
+    const lastY = h - (state.brightness / 255) * h;
+    autoGraphCtx.fillStyle = "#f59e0b";
+    autoGraphCtx.beginPath();
+    autoGraphCtx.arc(lastX, lastY, 4, 0, Math.PI * 2);
+    autoGraphCtx.fill();
+  }
+}
+
+// ============ FEANet 融合输出绘制 ============
+//
+// FEANet = Feature Enhancement Attention Network（特征增强注意力网络）
+//
+// 为什么需要融合？单一通道的痛点：
+//   - 仅 RGB：夜间蚊虫颜色对比度低（灰暗背景+灰暗虫子），漏检率 60%+
+//   - 仅热成像：白天环境温度高，蚊虫与背景温差小（1~2°C），轮廓模糊
+//
+// 融合的核心思想（真车）：
+//   1. RGB 通道 → CNN backbone → 特征图 F_rgb（颜色、纹理、形状）
+//   2. 热成像 → 另一路 backbone → 特征图 F_th（温度轮廓、目标显著性）
+//   3. Attention 模块学习权重：哪部分特征更"值得关注"
+//      例如：夜间 → 热成像权重高；白天 → RGB 权重高
+//   4. F_fused = α·F_rgb + β·F_th，α+β=1（自适应权重）
+//
+// 本模块做了简化（不是真 FEANet，是仿真）：
+//   - 没跑模型，直接用 alpha 系数在 canvas 层面叠图
+//     公式：fused = th_weight × thermal + rgb_weight × rgb
+//     日间：rgbW=0.6, thW=0.4  → RGB 主导
+//     夜间：rgbW=0.3, thW=0.7  → 热成像主导
+//   - FEANet 注意力热力图用高斯径向渐变模拟（在检测框位置生成黄色光斑）
+//
+// 面试常被问：
+//   Q: 为什么不直接 concat（拼接）两路特征再卷积？
+//   A: concat 会让通道数翻倍，模型参数量暴涨，且学到"什么时候该用谁"的难度高。
+//      Attention 加权让网络自己学权重，比 concat 优雅且参数量更小。
+//
+//   Q: 权重 0.3/0.7 是拍脑袋的吗？
+//   A: 是经验值。真车做法是用 5 万张标注样本训练 Attention 模块，
+//      让网络自己学"夜间该 0.7、白天该 0.6"这种模式。
+//      我这因为没训练数据，先用经验值跑通逻辑。
+//
+//   Q: 注意力热力图有什么用？
+//   A: 可视化 + 调试。真车上 attention map 还能当"模型在关注哪里"的可解释性依据，
+//      比如检测器抓错了物体，看 attention map 能反推是不是背景被误判成蚊虫。
+const fusedCanvas = $("fusedCanvas");
+const fusedCtx = fusedCanvas.getContext("2d");
+
+function drawFused() {
+  const w = fusedCanvas.width = fusedCanvas.offsetWidth * 2;
+  const h = fusedCanvas.height = fusedCanvas.offsetHeight * 2;
+
+  // 融合底图：RGB 与 热成像 加权融合
+  // 夜间：热成像权重高（0.7），日间：RGB 权重高（0.6）
+  const rgbW = state.isNight ? 0.3 : 0.6;
+  const thW = 1 - rgbW;
+
+  // 简化：用热成像底图 + RGB 纹理叠加
+  fusedCtx.drawImage(thermalCanvas, 0, 0, w, h);
+  fusedCtx.globalAlpha = rgbW;
+  fusedCtx.drawImage(rgbCanvas, 0, 0, w, h);
+  fusedCtx.globalAlpha = 1;
+
+  // FEANet 特征增强注意力热力图（模拟 attention map）
+  // 在蚊虫位置生成高斯注意力斑
+  for (const d of state.detections) {
+    const cx = d.x * w + d.w * w / 2;
+    const cy = d.y * h + d.h * h / 2;
+    const r = Math.max(d.w, d.h) * w * 2;
+    const grad = fusedCtx.createRadialGradient(cx, cy, 0, cx, cy, r);
+    grad.addColorStop(0, "rgba(255,255,0,0.35)");
+    grad.addColorStop(0.5, "rgba(255,165,0,0.15)");
+    grad.addColorStop(1, "rgba(255,100,0,0)");
+    fusedCtx.fillStyle = grad;
+    fusedCtx.fillRect(0, 0, w, h);
+  }
+
+  // 绘制检测框 + 标签
+  let confSum = 0;
+  for (const d of state.detections) {
+    const x = d.x * w, y = d.y * h, bw = d.w * w, bh = d.h * h;
+    const color = SPECIES_COLOR[d.species];
+    confSum += d.conf;
+
+    // 检测框
+    fusedCtx.strokeStyle = color;
+    fusedCtx.lineWidth = 2;
+    fusedCtx.strokeRect(x, y, bw, bh);
+
+    // 角点装饰
+    fusedCtx.lineWidth = 3;
+    const cornerLen = 8;
+    fusedCtx.beginPath();
+    fusedCtx.moveTo(x, y + cornerLen); fusedCtx.lineTo(x, y); fusedCtx.lineTo(x + cornerLen, y);
+    fusedCtx.moveTo(x + bw - cornerLen, y); fusedCtx.lineTo(x + bw, y); fusedCtx.lineTo(x + bw, y + cornerLen);
+    fusedCtx.moveTo(x + bw, y + bh - cornerLen); fusedCtx.lineTo(x + bw, y + bh); fusedCtx.lineTo(x + bw - cornerLen, y + bh);
+    fusedCtx.moveTo(x + cornerLen, y + bh); fusedCtx.lineTo(x, y + bh); fusedCtx.lineTo(x, y + bh - cornerLen);
+    fusedCtx.stroke();
+
+    // 标签背景
+    const label = SPECIES_CN[d.species] + " " + (d.conf * 100).toFixed(0) + "%";
+    fusedCtx.font = "bold 13px monospace";
+    const tw = fusedCtx.measureText(label).width + 8;
+    fusedCtx.fillStyle = color;
+    fusedCtx.fillRect(x, y - 18, tw, 16);
+    fusedCtx.fillStyle = "#000";
+    fusedCtx.fillText(label, x + 4, y - 5);
+  }
+
+  // 十字准星
+  fusedCtx.strokeStyle = "rgba(6,182,212,0.4)";
+  fusedCtx.lineWidth = 1;
+  fusedCtx.beginPath();
+  fusedCtx.moveTo(w/2 - 12, h/2); fusedCtx.lineTo(w/2 + 12, h/2);
+  fusedCtx.moveTo(w/2, h/2 - 12); fusedCtx.lineTo(w/2, h/2 + 12);
+  fusedCtx.stroke();
+
+  const avgConf = state.detections.length ? (confSum / state.detections.length) : 0;
+  $("fusedInfo").textContent = "检测: " + state.detections.length + " · 置信: " + (avgConf * 100).toFixed(0) + "%";
+  return avgConf;
+}
+
+// ============ 捕获通道计数 ============
+//
+// ByteTrack 多目标跟踪 + 虚拟线过线计数原理：
+//
+// 1. 为什么需要"跟踪"，直接检测不行吗？
+//    单帧 YOLOv8 检测会"抖动"——同一只蚊子在第 1 帧、(x=0.3, y=0.4)，
+//    第 2 帧可能跳到 (x=0.32, y=0.41)，第 3 帧又被另一只蚊子遮挡后丢失。
+//    如果直接"每帧有多少只就计数多少只"，一只蚊子会被数 3~5 次。
+//
+// 2. ByteTrack 怎么解决？
+//    给每个目标分配一个**唯一 ID**，跨帧用 IoU（交并比）+ 卡尔曼滤波做关联：
+//      - 新出现的检测框：分配新 ID
+//      - 已有 ID 的目标：用预测位置 vs 新检测框算 IoU，最匹配的继承 ID
+//      - 连续 N 帧没匹配的 ID：认为目标离开，回收
+//    这样一只蚊子从进入画面到离开画面，全程只有一个 ID，过线只 +1。
+//
+// 3. 虚拟线过线：
+//    在画面 25% 宽度处画一条竖线（绿色虚线）。
+//    当目标 x < lineX 且还没标记 crossed → 计数 +1，标 crossed。
+//    crossed 防重：目标继续往左飞，也不会再触发。
+//
+// 4. 本模块简化：
+//    没用真 YOLO + ByteTrack，而是直接给每个目标生成一个固定 ID，
+//    按时间步长匀速往左移动，过线检测逻辑跟真车一致。
+//
+// 面试常被问：
+//   Q: 为什么不直接用 SORT / DeepSORT？
+//   A: SORT/DeepSORT 需要外观特征（ReID 模型），算力开销大。
+//      ByteTrack 只用运动信息（IoU + 卡尔曼），轻量且能处理低置信度检测，
+//      对算力受限的嵌入式平台（Jetson Nano 这种）更友好。
+//
+//   Q: 过线检测为什么不在中心线？
+//   A: 中心线的话，目标还在画面里就被数完了——后端无法做二次确认。
+//      25% 偏左，目标过线后还能看到几百毫秒，万一分类错误可以校正。
+const captureCanvas = $("captureCanvas");
+const captureCtx = captureCanvas.getContext("2d");
+let captureFrame = 0;
+
+function drawCaptureChannel() {
+  const w = captureCanvas.width = captureCanvas.offsetWidth * 2;
+  const h = captureCanvas.height = captureCanvas.offsetHeight * 2;
+  captureFrame++;
+  const now = Date.now();
+  const dt = state._lastCapTime ? (now - state._lastCapTime) / 1000 : 0.033;
+  state._lastCapTime = now;
+
+  // 通道背景（微距视角，暗环境+补光）
+  const grad = captureCtx.createLinearGradient(0, 0, 0, h);
+  grad.addColorStop(0, "#1a1a1a");
+  grad.addColorStop(0.5, "#2a2a2a");
+  grad.addColorStop(1, "#1a1a1a");
+  captureCtx.fillStyle = grad;
+  captureCtx.fillRect(0, 0, w, h);
+
+  // 气流方向指示线（负压吸入，从右向左）
+  captureCtx.strokeStyle = "rgba(6,182,212,0.15)";
+  captureCtx.lineWidth = 1;
+  for (let i = 0; i < 5; i++) {
+    const y = (i + 0.5) * h / 5;
+    captureCtx.beginPath();
+    captureCtx.moveTo(w, y);
+    captureCtx.lineTo(0, y);
+    captureCtx.setLineDash([4, 8]);
+    captureCtx.stroke();
+  }
+  captureCtx.setLineDash([]);
+
+  // 虚拟计数线（左侧 1/4 处）
+  const lineX = w * 0.25;
+  captureCtx.strokeStyle = "#10b981";
+  captureCtx.lineWidth = 2;
+  captureCtx.setLineDash([6, 4]);
+  captureCtx.beginPath();
+  captureCtx.moveTo(lineX, 0);
+  captureCtx.lineTo(lineX, h);
+  captureCtx.stroke();
+  captureCtx.setLineDash([]);
+  captureCtx.fillStyle = "rgba(16,185,129,0.8)";
+  captureCtx.font = "10px monospace";
+  captureCtx.fillText("COUNT LINE", lineX + 4, 12);
+
+  // 生成新目标（基于时间，每秒约生成 3 个）
+  if (Math.random() < dt * 3 && state.captureTargets.length < 8) {
+    const species = pick(SPECIES);
+    state.captureTargets.push({
+      id: state.nextId++,
+      x: w + 20,
+      y: rand(30, h - 30),
+      vx: -rand(80, 160),  // 像素/秒
+      species: species,
+      crossed: false,
+    });
+  }
+
+  // 更新目标位置（基于时间步长）
+  for (const t of state.captureTargets) {
+    t.x += t.vx * dt;
+    // 过线检测
+    if (!t.crossed && t.x < lineX) {
+      t.crossed = true;
+      state.captureCount++;
+      state.speciesCounts[t.species]++;
+      log(`ID#${t.id} ${SPECIES_CN[t.species]} 过线计数 → 累计 ${state.captureCount}`, "ok");
+    }
+  }
+  // 移除离开画面的目标
+  state.captureTargets = state.captureTargets.filter(t => t.x > -30);
+
+  // 绘制目标（带 ID 标签，体现 ByteTrack 跟踪）
+  for (const t of state.captureTargets) {
+    const color = SPECIES_COLOR[t.species];
+    captureCtx.fillStyle = color;
+    captureCtx.beginPath();
+    captureCtx.arc(t.x, t.y, 6, 0, Math.PI * 2);
+    captureCtx.fill();
+    // 轨迹
+    captureCtx.strokeStyle = color + "80";
+    captureCtx.lineWidth = 1;
+    captureCtx.beginPath();
+    captureCtx.moveTo(t.x, t.y);
+    captureCtx.lineTo(t.x + 20, t.y);
+    captureCtx.stroke();
+    // ID 标签
+    captureCtx.fillStyle = "rgba(0,0,0,0.7)";
+    captureCtx.fillRect(t.x - 12, t.y - 22, 24, 14);
+    captureCtx.fillStyle = color;
+    captureCtx.font = "10px monospace";
+    captureCtx.fillText("#" + t.id, t.x - 10, t.y - 11);
+  }
+
+  // 风机/电网区域指示（最左侧）
+  captureCtx.fillStyle = "rgba(239,68,68,0.1)";
+  captureCtx.fillRect(0, 0, 30, h);
+  captureCtx.fillStyle = "#ef4444";
+  captureCtx.font = "10px monospace";
+  captureCtx.fillText("⚡电网", 4, h/2);
+
+  $("captureInfo").textContent = "计数: " + state.captureCount + " · 在线: " + state.captureTargets.length;
+}
+
+// ============ FFT 翼翅振动频率 ============
+//
+// 原理：
+//   蚊虫飞行时翅膀拍打空气产生特征频率——伊蚊 ~500Hz、库蚊 ~400Hz、按蚊 ~450Hz。
+//   I2S 麦克风采样音频（这里 16kHz 采样率，足够覆盖到 8kHz 奈奎斯特频率），
+//   对音频帧做 FFT（快速傅里叶变换）得到频谱，主频 = 峰值位置对应的频率。
+//
+// 真车上：
+//   1. 麦克风 → I2S 数字音频流（PDM 编码也行，需先解码）
+//   2. 每 N 毫秒切一帧（典型 N=20ms，对应 320 个采样点）
+//   3. 窗函数（Hann/Hamming）减少频谱泄漏
+//   4. FFT（1024 点补零后做） → 频谱数组
+//   5. 找主频 → 与种类特征库比对 → 辅助分类（不能 100% 替代视觉）
+//
+// 本模块做了简化：
+//   没有真采样音频；直接用 WINGBEAT_FREQ 表里的"主频"作为目标，画出
+//   高斯峰 + 噪声的频谱柱状图。真车上把"目标频率"换成"FFT 实测峰值"即可。
+//
+// 面试常被问：
+//   Q: 为什么是 300~700Hz 范围？
+//   A: 蚊子翅膀拍打特征频率都在这个区间。低于 300Hz 是风声/电机噪声，
+//      高于 700Hz 是高频电路噪声/电源干扰。
+//
+//   Q: FFT 为什么不放在云端？
+//   A: 单帧 FFT 几十微秒级，必须本地实时处理；网络往返延迟会错过下一帧音频。
+//
+//   Q: 单凭频率能区分蚊种吗？
+//   A: 不能。同种蚊子在不同温度/湿度/年龄下频率漂移 ±20Hz，
+//      所以只能"辅助"分类，最终决策还要靠视觉检测框。
+const fftCanvas = $("fftCanvas");
+const fftCtx = fftCanvas.getContext("2d");
+
+function drawFFT() {
+  const w = fftCanvas.width = fftCanvas.offsetWidth * 2;
+  const h = fftCanvas.height = fftCanvas.offsetHeight * 2;
+
+  // 背景
+  fftCtx.fillStyle = "#050810";
+  fftCtx.fillRect(0, 0, w, h);
+
+  // 网格
+  fftCtx.strokeStyle = "rgba(30,41,59,0.5)";
+  fftCtx.lineWidth = 1;
+  for (let i = 0; i <= 8; i++) {
+    const x = (i / 8) * w;
+    fftCtx.beginPath();
+    fftCtx.moveTo(x, 0); fftCtx.lineTo(x, h);
+    fftCtx.stroke();
+  }
+  for (let i = 0; i <= 4; i++) {
+    const y = (i / 4) * h;
+    fftCtx.beginPath();
+    fftCtx.moveTo(0, y); fftCtx.lineTo(w, y);
+    fftCtx.stroke();
+  }
+
+  // 生成频谱：主频由当前检测到的蚊种决定
+  let dominantFreq = 450;
+  if (state.detections.length > 0) {
+    const species = state.detections[0].species;
+    dominantFreq = WINGBEAT_FREQ[species];
+  }
+  // 频谱数据：在主频处有峰值，加噪声
+  for (let i = 0; i < state.fftData.length; i++) {
+    const freq = 300 + (i / state.fftData.length) * 400; // 300~700 Hz
+    const dist = Math.abs(freq - dominantFreq);
+    const peak = Math.exp(-(dist * dist) / 800) * 0.8;
+    state.fftData[i] = state.fftData[i] * 0.7 + (peak + rand(0, 0.1)) * 0.3;
+  }
+
+  // 绘制频谱柱状图
+  const barW = w / state.fftData.length;
+  for (let i = 0; i < state.fftData.length; i++) {
+    const val = state.fftData[i];
+    const barH = val * h * 0.9;
+    const x = i * barW;
+    const freq = 300 + (i / state.fftData.length) * 400;
+    // 颜色：接近主频时高亮
+    const dist = Math.abs(freq - dominantFreq);
+    const isPeak = dist < 30;
+    fftCtx.fillStyle = isPeak ? "#f59e0b" : "#06b6d4";
+    fftCtx.fillRect(x + 1, h - barH, barW - 2, barH);
+  }
+
+  // 主频标注线
+  const peakX = ((dominantFreq - 300) / 400) * w;
+  fftCtx.strokeStyle = "#f59e0b";
+  fftCtx.lineWidth = 1;
+  fftCtx.setLineDash([4, 4]);
+  fftCtx.beginPath();
+  fftCtx.moveTo(peakX, 0);
+  fftCtx.lineTo(peakX, h);
+  fftCtx.stroke();
+  fftCtx.setLineDash([]);
+
+  // 频率刻度
+  fftCtx.fillStyle = "#64748b";
+  fftCtx.font = "9px monospace";
+  fftCtx.fillText("300Hz", 2, h - 2);
+  fftCtx.fillText("500Hz", w/2 - 15, h - 2);
+  fftCtx.fillText("700Hz", w - 30, h - 2);
+  fftCtx.fillStyle = "#f59e0b";
+  fftCtx.fillText(dominantFreq + "Hz", peakX + 4, 12);
+
+  $("fftInfo").textContent = "主频: " + dominantFreq + "Hz · I2S 16kHz";
+}
+
+// ============ 更新统计 ============
+function updateStats(avgConf) {
+  const set = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
+  set("detCount", state.detections.length);
+  set("capCount", state.captureCount);
+  set("fpsVal", state.fps);
+  set("avgConf", (avgConf * 100).toFixed(0) + "%");
+  set("cntAedes", state.speciesCounts.aedes);
+  set("cntCulex", state.speciesCounts.culex);
+  set("cntAnopheles", state.speciesCounts.anopheles);
+
+  const total = state.speciesCounts.aedes + state.speciesCounts.culex + state.speciesCounts.anopheles;
+  const bar = document.getElementById("speciesBar");
+  if (bar && total > 0) {
+    if (bar.children[0]) bar.children[0].style.width = (state.speciesCounts.aedes / total * 100) + "%";
+    if (bar.children[1]) bar.children[1].style.width = (state.speciesCounts.culex / total * 100) + "%";
+    if (bar.children[2]) bar.children[2].style.width = (state.speciesCounts.anopheles / total * 100) + "%";
+  }
+}
+
+// ============ 模式切换 ============
+function setNight(night) {
+  state.isNight = night;
+  const ind = $("modeIndicator");
+  if (night) {
+    ind.className = "mode-indicator mode-night";
+    ind.textContent = "🌙 夜间模式（热成像主导）";
+    log("切换夜间模式：热成像权重提升至 0.7，RGB 增益+30dB", "warn");
+  } else {
+    ind.className = "mode-indicator mode-day";
+    ind.textContent = "☀ 日间模式（RGB 主导）";
+    log("切换日间模式：RGB 权重 0.6，热成像辅助", "ok");
+  }
+}
+
+// ============ 主循环 ============
+let frameCount = 0;
+let lastSpawn = 0;
+let lastCapture = 0;
+function loop() {
+  try {
+    frameCount++;
+    const now = Date.now();
+
+    // 每 500ms 生成新的检测目标（与帧率无关）
+    if (now - lastSpawn > 500) {
+      spawnDetections();
+      lastSpawn = now;
+    }
+
+    drawRGB();
+    drawAutoNight();  // 必须在 drawRGB 之后（采样 rgbCanvas）
+    drawThermal();
+    const avgConf = drawFused();
+    drawCaptureChannel();
+    drawFFT();
+    updateStats(avgConf);
+
+    const clk = document.getElementById("clock");
+    if (clk) clk.textContent = new Date().toLocaleTimeString();
+
+    // 递归调度下一帧（rAF 模式）
+    requestAnimationFrame(loop);
+  } catch (e) {
+    console.error("[RGBT][LOOP ERROR]", e.message);
+  }
+}
+
+// ============ 按钮事件 ============
+//
+// 通用防抖：相邻点击间隔 < 120ms 的丢弃，防止误触/双击。
+// 面试可讲：rAF 调度下，60Hz 一帧 ~16ms，连续点击若无防抖会堆积回调。
+
+function debounce(fn, ms) {
+  let last = 0;
+  return function (...args) {
+    const now = Date.now();
+    if (now - last < ms) return;
+    last = now;
+    return fn.apply(this, args);
+  };
+}
+
+$("btnAuto").addEventListener("click", debounce(() => {
+  state.autoMode = !state.autoMode;
+  $("btnAuto").classList.toggle("active", state.autoMode);
+  log(state.autoMode ? "自动识别：开启" : "自动识别：关闭", "ok");
+});
+
+$("btnCam").addEventListener("click", debounce(toggleCamera, 300));
+
+$("btnNight").addEventListener("click", debounce(() => {
+  setNight(!state.isNight);
+}, 200));
+
+$("btnCount").addEventListener("click", debounce(() => {
+  state.captureCount = 0;
+  state.speciesCounts = { aedes: 0, culex: 0, anopheles: 0 };
+  state.captureTargets = [];
+  log("捕获计数已复位", "warn");
+}, 200));
+
+$("btnSpeed").addEventListener("click", debounce(() => {
+  state.fps = state.fps === 30 ? 10 : 30;
+  $("btnSpeed").textContent = state.fps === 30 ? "降速演示" : "恢复 30fps";
+  log("FPS: " + state.fps, "ok");
+}, 200));
+
+// 环境光滑块：模拟天色变化。拖到左边 = 天黑，触发自动判定切夜间。
+$("ambientSlider").addEventListener("input", (e) => {
+  state.ambientLight = parseInt(e.target.value, 10);
+  log("环境光设为 " + state.ambientLight + "（演示模拟天色变化）", "warn");
+});
+
+// ============ 启动 ============
+log("RGBT 视觉识别模块启动", "ok");
+log("加载 FEANet 特征增强注意力模型...", "ok");
+log("RGB: OV5640 640x480 · 热成像: MLX90640 32x24", "ok");
+log("YOLOv8n 检测 + ByteTrack 跟踪 · TensorRT 加速", "ok");
+log("蚊虫种类: 伊蚊/库蚊/按蚊 · 翅振频率 FFT 辅助", "ok");
+setNight(false);
+// 启动：requestAnimationFrame 替代 setInterval，与显示器刷新对齐（通常 60Hz），
+// 浏览器会自动调度，比 setInterval 1000/30 更平滑、不抖、不空转。
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
